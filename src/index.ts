@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-import express, { Request, Response, NextFunction } from 'express';
+import express, { Request, Response, NextFunction, RequestHandler } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
@@ -11,6 +11,7 @@ import { errorHandler, notFoundHandler, asyncHandler } from './middleware/errorH
 import { cache } from './utils/cache.js';
 import { getRateLimitInfo } from './oura/client.js';
 import { tokensFileExists } from './oauth/tokens.js';
+import { mountMcpOAuth } from './mcp-oauth.js';
 
 // Load environment variables
 dotenv.config();
@@ -123,6 +124,44 @@ app.post('/oauth/disconnect', authenticateMCP, asyncHandler(async (_req: Request
   res.json({ success: true, message: 'OAuth disconnected successfully' });
 }));
 
+// MCP OAuth 2.1 layer (for claude.ai custom connector). When MCP_OAUTH_PASSCODE
+// is set, mounts /authorize, /token, /register, /approve and the well-known
+// metadata endpoints at root, and gates /sse and /message with OAuth bearer
+// validation. The legacy AUTH_TOKEN path still works for existing local clients.
+const mcpOAuthPasscode = process.env.MCP_OAUTH_PASSCODE;
+const publicUrl = process.env.PUBLIC_URL
+  || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : undefined);
+
+let requireOAuthBearer: RequestHandler | null = null;
+if (mcpOAuthPasscode && publicUrl) {
+  const { requireBearer } = mountMcpOAuth(app, {
+    publicUrl: new URL(publicUrl),
+    resourcePath: '/sse',
+    passcode: mcpOAuthPasscode,
+    resourceName: 'Oura MCP',
+    scopesSupported: ['mcp'],
+  });
+  requireOAuthBearer = requireBearer;
+  console.log('[Oura MCP] OAuth 2.1 enabled — claude.ai custom connectors supported');
+}
+
+// Hybrid auth: try legacy AUTH_TOKEN first, fall back to OAuth Bearer (with proper
+// 401 + WWW-Authenticate so claude.ai discovers the OAuth metadata).
+const authMcp: RequestHandler = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.replace(/^Bearer\s+/i, '');
+  const legacy = process.env.AUTH_TOKEN;
+  if (token && legacy && token === legacy) {
+    return next();
+  }
+  if (requireOAuthBearer) {
+    return requireOAuthBearer(req, res, next);
+  }
+  // No OAuth configured and legacy didn't match — fall back to the original middleware
+  // which produces a structured 401.
+  return authenticateMCP(req, res, next);
+};
+
 // MCP endpoints
 // OPTIONS handlers for CORS preflight
 app.options('/sse', (_req: Request, res: Response) => {
@@ -134,15 +173,15 @@ app.options('/message', (_req: Request, res: Response) => {
 });
 
 // Support both GET and POST for SSE endpoint (some MCP clients use POST)
-app.get('/sse', authenticateMCP, tokenRateLimiter, asyncHandler(async (req: Request, res: Response) => {
+app.get('/sse', authMcp, tokenRateLimiter, asyncHandler(async (req: Request, res: Response) => {
   await handleSSE(req, res);
 }));
 
-app.post('/sse', authenticateMCP, tokenRateLimiter, asyncHandler(async (req: Request, res: Response) => {
+app.post('/sse', authMcp, tokenRateLimiter, asyncHandler(async (req: Request, res: Response) => {
   await handleSSE(req, res);
 }));
 
-app.post('/message', authenticateMCP, tokenRateLimiter, mcpLimiter, asyncHandler(async (req: Request, res: Response) => {
+app.post('/message', authMcp, tokenRateLimiter, mcpLimiter, asyncHandler(async (req: Request, res: Response) => {
   await handleMessage(req, res);
 }));
 
