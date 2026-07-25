@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { handleAuthorize, handleCallback, getOAuthStatus, disconnectOAuth } from './oauth/handler.js';
 import { handleSSE, handleMessage } from './mcp/server.js';
+import { createOuraMcpServer } from './mcp/sdk-server.js';
 import { authenticateMCP } from './middleware/auth.js';
 import { tokenRateLimiter } from './middleware/tokenRateLimit.js';
 import { errorHandler, notFoundHandler, asyncHandler } from './middleware/errorHandler.js';
@@ -12,6 +13,8 @@ import { cache } from './utils/cache.js';
 import { getRateLimitInfo } from './oura/client.js';
 import { tokensFileExists } from './oauth/tokens.js';
 import { mountMcpOAuth } from './mcp-oauth.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { logger as appLogger } from './utils/logger.js';
 
 // Load environment variables
 dotenv.config();
@@ -35,15 +38,25 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
-// Security headers with Helmet
+// Security headers with Helmet.
+// Several CSP/COOP defaults break the OAuth popup flow with claude.ai:
+//  - form-action 'self' blocks cross-origin redirects in form submission chains.
+//    /approve POST returns a 302 to https://claude.ai/api/mcp/auth_callback;
+//    the browser refuses to follow it under that directive, so the popup
+//    stays on /authorize and claude.ai never gets the auth code.
+//  - Cross-Origin-Opener-Policy: same-origin sandboxes the popup away from
+//    its claude.ai opener, breaking the postMessage handshake.
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
       scriptSrc: ["'self'"],
+      formAction: ["'self'", 'https://claude.ai', 'https://*.claude.ai', 'http://localhost', 'http://127.0.0.1'],
     },
   },
+  crossOriginOpenerPolicy: false,
+  crossOriginResourcePolicy: false,
   hsts: {
     maxAge: 31536000, // 1 year
     includeSubDomains: true,
@@ -172,12 +185,48 @@ app.options('/message', (_req: Request, res: Response) => {
   res.status(200).end();
 });
 
+// claude.ai uses modern Streamable HTTP (POST /sse with JSON-RPC body, Accept:
+// application/json, text/event-stream). The hand-rolled SSE/message handlers
+// don't speak that protocol — wrap the existing tool dispatcher in an SDK
+// Server and handle modern requests via StreamableHTTPServerTransport.
+const looksLikeStreamableHTTP = (req: Request): boolean => {
+  const accept = String(req.headers['accept'] ?? '');
+  if (req.headers['mcp-protocol-version']) return true;
+  if (accept.includes('text/event-stream') && accept.includes('application/json')) return true;
+  if (req.method === 'POST' && req.body && typeof req.body === 'object' && 'jsonrpc' in req.body) return true;
+  return false;
+};
+
+const handleStreamableHttp = async (req: Request, res: Response) => {
+  const server = createOuraMcpServer();
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+  res.on('close', () => {
+    transport.close();
+    server.close();
+  });
+  try {
+    await server.connect(transport);
+    await transport.handleRequest(req as any, res, req.body);
+  } catch (err) {
+    appLogger.error('MCP request failed', { path: req.path }, err as Error);
+    if (!res.headersSent) {
+      res.status(500).json({
+        jsonrpc: '2.0',
+        error: { code: -32603, message: 'Internal server error' },
+        id: null,
+      });
+    }
+  }
+};
+
 // Support both GET and POST for SSE endpoint (some MCP clients use POST)
 app.get('/sse', authMcp, tokenRateLimiter, asyncHandler(async (req: Request, res: Response) => {
+  if (looksLikeStreamableHTTP(req)) return handleStreamableHttp(req, res);
   await handleSSE(req, res);
 }));
 
 app.post('/sse', authMcp, tokenRateLimiter, asyncHandler(async (req: Request, res: Response) => {
+  if (looksLikeStreamableHTTP(req)) return handleStreamableHttp(req, res);
   await handleSSE(req, res);
 }));
 

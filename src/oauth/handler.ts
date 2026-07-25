@@ -73,6 +73,10 @@ export function handleAuthorize(_req: Request, res: Response): void {
     return;
   }
 
+  // Scope list mirrors what's enabled on the developer app
+  // (cloud.ouraring.com/oauth/applications). 'heart_health' gates cardiovascular
+  // age / resilience / VO2 max; 'stress' gates daily stress; 'ring_configuration'
+  // gates the device endpoint.
   const scopes = [
     'email',
     'personal',
@@ -82,6 +86,9 @@ export function handleAuthorize(_req: Request, res: Response): void {
     'tag',
     'session',
     'spo2',
+    'stress',
+    'ring_configuration',
+    'heart_health',
   ].join(' ');
 
   const authUrl = new URL(OURA_AUTH_URL);

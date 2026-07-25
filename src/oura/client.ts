@@ -12,6 +12,17 @@ import {
   OuraSleepResponse,
   OuraTagResponse,
   OuraRingConfigurationResponse,
+  OuraDailySpo2Response,
+  OuraDailyStressResponse,
+  OuraDailyResilienceResponse,
+  OuraDailyCardioAgeResponse,
+  OuraVO2MaxResponse,
+  OuraSessionResponse,
+  OuraRestModePeriodResponse,
+  OuraSleepTimeResponse,
+  OuraEnhancedTagResponse,
+  OuraInterbeatIntervalResponse,
+  OuraRingBatteryLevelResponse,
 } from './types.js';
 
 const OURA_API_BASE_URL = 'https://api.ouraring.com/v2';
@@ -288,6 +299,288 @@ export async function getRingConfiguration(): Promise<OuraRingConfigurationRespo
     return response.data.data;
   } catch (error) {
     logger.error('Failed to fetch ring configuration:', error);
+    throw handleApiError(error);
+  }
+}
+
+/**
+ * Generic helper to fetch a date-range usercollection endpoint and return all
+ * pages flattened. Most v2 collections share the same `start_date`/`end_date`
+ * shape and a `next_token`-paginated response.
+ */
+async function fetchDateRangeCollection<T>(
+  endpoint: string,
+  startDate: string,
+  endDate?: string
+): Promise<T[]> {
+  const client = await createClient();
+  const params: Record<string, string> = { start_date: startDate };
+  if (endDate) params.end_date = endDate;
+
+  const out: T[] = [];
+  let nextToken: string | undefined;
+  // Cap pagination to avoid unbounded loops on broad ranges.
+  for (let i = 0; i < 20; i++) {
+    if (nextToken) params.next_token = nextToken;
+    const response = await client.get<OuraApiResponse<T>>(`/usercollection/${endpoint}`, { params });
+    out.push(...response.data.data);
+    if (!response.data.next_token) break;
+    nextToken = response.data.next_token;
+  }
+  return out;
+}
+
+/**
+ * Generic helper for datetime-range collections (heart rate, IBI, battery).
+ */
+async function fetchDatetimeRangeCollection<T>(
+  endpoint: string,
+  startDatetime: string,
+  endDatetime?: string
+): Promise<T[]> {
+  const client = await createClient();
+  const params: Record<string, string> = { start_datetime: startDatetime };
+  if (endDatetime) params.end_datetime = endDatetime;
+
+  const out: T[] = [];
+  let nextToken: string | undefined;
+  for (let i = 0; i < 20; i++) {
+    if (nextToken) params.next_token = nextToken;
+    const response = await client.get<OuraApiResponse<T>>(`/usercollection/${endpoint}`, { params });
+    out.push(...response.data.data);
+    if (!response.data.next_token) break;
+    nextToken = response.data.next_token;
+  }
+  return out;
+}
+
+/**
+ * Fetches daily SpO2 data
+ */
+export async function getDailySpo2(
+  startDate: string,
+  endDate?: string
+): Promise<OuraDailySpo2Response[]> {
+  try {
+    return await fetchDateRangeCollection<OuraDailySpo2Response>('daily_spo2', startDate, endDate);
+  } catch (error) {
+    logger.error('Failed to fetch daily SpO2:', error);
+    throw handleApiError(error);
+  }
+}
+
+/**
+ * Fetches daily stress data
+ */
+export async function getDailyStress(
+  startDate: string,
+  endDate?: string
+): Promise<OuraDailyStressResponse[]> {
+  try {
+    return await fetchDateRangeCollection<OuraDailyStressResponse>('daily_stress', startDate, endDate);
+  } catch (error) {
+    logger.error('Failed to fetch daily stress:', error);
+    throw handleApiError(error);
+  }
+}
+
+/**
+ * Fetches daily resilience data
+ */
+export async function getDailyResilience(
+  startDate: string,
+  endDate?: string
+): Promise<OuraDailyResilienceResponse[]> {
+  try {
+    return await fetchDateRangeCollection<OuraDailyResilienceResponse>(
+      'daily_resilience',
+      startDate,
+      endDate
+    );
+  } catch (error) {
+    logger.error('Failed to fetch daily resilience:', error);
+    throw handleApiError(error);
+  }
+}
+
+/**
+ * Fetches daily cardiovascular age data
+ */
+export async function getDailyCardiovascularAge(
+  startDate: string,
+  endDate?: string
+): Promise<OuraDailyCardioAgeResponse[]> {
+  try {
+    return await fetchDateRangeCollection<OuraDailyCardioAgeResponse>(
+      'daily_cardiovascular_age',
+      startDate,
+      endDate
+    );
+  } catch (error) {
+    logger.error('Failed to fetch daily cardiovascular age:', error);
+    throw handleApiError(error);
+  }
+}
+
+/**
+ * Fetches VO2 max estimates
+ */
+export async function getVO2Max(
+  startDate: string,
+  endDate?: string
+): Promise<OuraVO2MaxResponse[]> {
+  try {
+    return await fetchDateRangeCollection<OuraVO2MaxResponse>('vO2_max', startDate, endDate);
+  } catch (error) {
+    logger.error('Failed to fetch VO2 max:', error);
+    throw handleApiError(error);
+  }
+}
+
+/**
+ * Fetches sessions (Moments — meditation, breathing, relaxation, etc.)
+ */
+export async function getSessions(
+  startDate: string,
+  endDate?: string
+): Promise<OuraSessionResponse[]> {
+  try {
+    return await fetchDateRangeCollection<OuraSessionResponse>('session', startDate, endDate);
+  } catch (error) {
+    logger.error('Failed to fetch sessions:', error);
+    throw handleApiError(error);
+  }
+}
+
+/**
+ * Fetches rest mode periods (illness/recovery mode)
+ */
+export async function getRestModePeriods(
+  startDate: string,
+  endDate?: string
+): Promise<OuraRestModePeriodResponse[]> {
+  try {
+    return await fetchDateRangeCollection<OuraRestModePeriodResponse>(
+      'rest_mode_period',
+      startDate,
+      endDate
+    );
+  } catch (error) {
+    logger.error('Failed to fetch rest mode periods:', error);
+    throw handleApiError(error);
+  }
+}
+
+/**
+ * Fetches recommended sleep timing
+ */
+export async function getSleepTime(
+  startDate: string,
+  endDate?: string
+): Promise<OuraSleepTimeResponse[]> {
+  try {
+    return await fetchDateRangeCollection<OuraSleepTimeResponse>('sleep_time', startDate, endDate);
+  } catch (error) {
+    logger.error('Failed to fetch sleep time:', error);
+    throw handleApiError(error);
+  }
+}
+
+/**
+ * Fetches enhanced tags (newer tag schema with type codes and durations)
+ */
+export async function getEnhancedTags(
+  startDate: string,
+  endDate?: string
+): Promise<OuraEnhancedTagResponse[]> {
+  try {
+    return await fetchDateRangeCollection<OuraEnhancedTagResponse>(
+      'enhanced_tag',
+      startDate,
+      endDate
+    );
+  } catch (error) {
+    logger.error('Failed to fetch enhanced tags:', error);
+    throw handleApiError(error);
+  }
+}
+
+/**
+ * Fetches interbeat interval (IBI) timeseries
+ */
+export async function getInterbeatInterval(
+  startDatetime: string,
+  endDatetime?: string
+): Promise<OuraInterbeatIntervalResponse[]> {
+  try {
+    return await fetchDatetimeRangeCollection<OuraInterbeatIntervalResponse>(
+      'interbeat_interval',
+      startDatetime,
+      endDatetime
+    );
+  } catch (error) {
+    logger.error('Failed to fetch interbeat intervals:', error);
+    throw handleApiError(error);
+  }
+}
+
+/**
+ * Fetches ring battery level timeseries
+ */
+export async function getRingBatteryLevel(
+  startDatetime: string,
+  endDatetime?: string
+): Promise<OuraRingBatteryLevelResponse[]> {
+  try {
+    return await fetchDatetimeRangeCollection<OuraRingBatteryLevelResponse>(
+      'ring_battery_level',
+      startDatetime,
+      endDatetime
+    );
+  } catch (error) {
+    logger.error('Failed to fetch ring battery level:', error);
+    throw handleApiError(error);
+  }
+}
+
+/**
+ * Set of usercollection types that support /{document_id} fetches.
+ */
+export const SINGLE_DOCUMENT_COLLECTIONS = [
+  'daily_activity',
+  'daily_cardiovascular_age',
+  'daily_readiness',
+  'daily_resilience',
+  'daily_sleep',
+  'daily_spo2',
+  'daily_stress',
+  'enhanced_tag',
+  'rest_mode_period',
+  'ring_configuration',
+  'session',
+  'sleep',
+  'sleep_time',
+  'tag',
+  'vO2_max',
+  'workout',
+] as const;
+
+export type SingleDocumentCollection = (typeof SINGLE_DOCUMENT_COLLECTIONS)[number];
+
+/**
+ * Fetches a single document by ID from any supported usercollection.
+ */
+export async function getDocumentById(
+  collection: SingleDocumentCollection,
+  documentId: string
+): Promise<unknown> {
+  const client = await createClient();
+
+  try {
+    const response = await client.get(`/usercollection/${collection}/${encodeURIComponent(documentId)}`);
+    return response.data;
+  } catch (error) {
+    logger.error(`Failed to fetch ${collection}/${documentId}:`, error);
     throw handleApiError(error);
   }
 }

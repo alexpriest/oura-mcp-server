@@ -4,7 +4,10 @@ import { encryptToken, decryptToken } from '../utils/encryption.js';
 import { OAuthTokens } from '../oura/types.js';
 import { logger } from '../utils/logger.js';
 
-const TOKENS_FILE = path.join(process.cwd(), 'tokens.json');
+// Persist to a Railway volume if attached (RAILWAY_VOLUME_MOUNT_PATH=/data)
+// so tokens survive redeploys. Falls back to cwd locally.
+const TOKENS_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || process.cwd();
+const TOKENS_FILE = path.join(TOKENS_DIR, 'tokens.json');
 const TOKEN_REFRESH_BUFFER = 5 * 60 * 1000; // Refresh 5 minutes before expiration
 
 // In-memory cache

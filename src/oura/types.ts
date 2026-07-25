@@ -391,3 +391,138 @@ export interface OuraRingConfigurationResponse {
   set_up_at: string;
   size: number;
 }
+
+// Daily SpO2
+export interface OuraDailySpo2Response {
+  id: string;
+  day: string;
+  breathing_disturbance_index: number | null;
+  spo2_percentage: { average: number } | null;
+}
+
+// Daily Stress
+export interface OuraDailyStressResponse {
+  id: string;
+  day: string;
+  day_summary: 'restored' | 'normal' | 'stressful' | null;
+  recovery_high: number | null;
+  stress_high: number | null;
+}
+
+// Daily Resilience
+export interface OuraDailyResilienceResponse {
+  id: string;
+  day: string;
+  contributors: {
+    sleep_recovery: number;
+    daytime_recovery: number;
+    stress: number;
+  };
+  level: 'limited' | 'adequate' | 'solid' | 'strong' | 'exceptional';
+}
+
+// Daily Cardiovascular Age
+export interface OuraDailyCardioAgeResponse {
+  id: string;
+  day: string;
+  vascular_age: number | null;
+}
+
+// VO2 Max
+export interface OuraVO2MaxResponse {
+  id: string;
+  day: string;
+  timestamp: string;
+  vo2_max: number;
+}
+
+// Session (mindfulness/meditation/breathing)
+export interface OuraSampleData {
+  interval: number;
+  items: Array<number | null>;
+  timestamp: string;
+}
+
+export interface OuraSessionResponse {
+  id: string;
+  day: string;
+  start_datetime: string;
+  end_datetime: string;
+  type: 'breathing' | 'meditation' | 'nap' | 'relaxation' | 'rest' | 'body_status';
+  mood?: 'bad' | 'worse' | 'same' | 'good' | 'great' | null;
+  heart_rate?: OuraSampleData | null;
+  heart_rate_variability?: OuraSampleData | null;
+  motion_count?: OuraSampleData | null;
+}
+
+// Rest Mode Period
+export interface OuraRestModeEpisode {
+  tags: string[];
+  timestamp: string;
+}
+
+export interface OuraRestModePeriodResponse {
+  id: string;
+  start_day: string;
+  end_day: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  episodes: OuraRestModeEpisode[];
+}
+
+// Sleep Time (recommended bedtime)
+export interface OuraSleepTimeWindow {
+  day_tz: number;
+  start_offset: number;
+  end_offset: number;
+}
+
+export interface OuraSleepTimeResponse {
+  id: string;
+  day: string;
+  optimal_bedtime: OuraSleepTimeWindow | null;
+  recommendation:
+    | 'improve_efficiency'
+    | 'earlier_bedtime'
+    | 'later_bedtime'
+    | 'earlier_wake_up_time'
+    | 'later_wake_up_time'
+    | 'follow_optimal_bedtime'
+    | null;
+  status:
+    | 'not_enough_nights'
+    | 'not_enough_recent_nights'
+    | 'bad_sleep_quality'
+    | 'only_recommended_found'
+    | 'optimal_found'
+    | null;
+}
+
+// Enhanced Tag
+export interface OuraEnhancedTagResponse {
+  id: string;
+  tag_type_code: string | null;
+  start_time: string;
+  end_time: string | null;
+  start_day: string;
+  end_day: string | null;
+  comment: string | null;
+  custom_name: string | null;
+}
+
+// Interbeat Interval
+export interface OuraInterbeatIntervalResponse {
+  timestamp: string;
+  timestamp_unix: number;
+  ibi: number;
+  validity: number;
+}
+
+// Ring Battery Level
+export interface OuraRingBatteryLevelResponse {
+  timestamp: string;
+  timestamp_unix: number;
+  charging: boolean | null;
+  in_charger: boolean | null;
+  level: number;
+}
