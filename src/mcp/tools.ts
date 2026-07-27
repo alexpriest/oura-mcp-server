@@ -33,7 +33,7 @@ import {
   getDaysAgo,
 } from '../utils/validation.js';
 import cache from '../utils/cache.js';
-import { MCPTool, MCPToolCall, MCPResponse } from '../oura/types.js';
+import { MCPTool, MCPToolCall, MCPResponse, OuraSleepResponse } from '../oura/types.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -50,7 +50,9 @@ export const tools: MCPTool[] = [
   },
   {
     name: 'get_sleep_summary',
-    description: 'Get sleep data for a date range',
+    description:
+      'Get sleep data for a date range. Durations are in seconds and come from measured sleep periods; ' +
+      'null means no sleep period was recorded that day. `contributor_scores` are Oura sub-scores (0-100), not measurements.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -64,7 +66,7 @@ export const tools: MCPTool[] = [
         },
         include_hrv: {
           type: 'boolean',
-          description: 'Include HRV data (default: false)',
+          description: 'Include average HRV and heart-rate values from the main sleep period (default: false)',
         },
       },
       required: ['start_date'],
@@ -488,6 +490,79 @@ async function handleGetPersonalInfo(): Promise<string> {
   return result;
 }
 
+interface MeasuredSleepDay {
+  totalSleep: number;
+  timeInBed: number;
+  deep: number;
+  light: number;
+  rem: number;
+  awake: number;
+  efficiency: number | null;
+  latency: number | null;
+  bedtimeStart: string | null;
+  bedtimeEnd: string | null;
+  averageHrv: number | null;
+  averageHeartRate: number | null;
+  lowestHeartRate: number | null;
+  periods: number;
+}
+
+/**
+ * Collapses Oura sleep periods into one measured record per day.
+ *
+ * A day can hold several periods (a split night, a nap). Durations sum across
+ * them; latency, bedtimes and the heart metrics are taken from the main sleep
+ * period, since summing those would be meaningless. `rest` and `deleted`
+ * periods carry no sleep and are dropped.
+ */
+function groupSleepPeriodsByDay(periods: OuraSleepResponse[]): Map<string, MeasuredSleepDay> {
+  const byDay = new Map<string, OuraSleepResponse[]>();
+
+  for (const period of periods) {
+    if (period.type === 'deleted' || period.type === 'rest') continue;
+    if (!period.total_sleep_duration) continue;
+    const existing = byDay.get(period.day);
+    if (existing) {
+      existing.push(period);
+    } else {
+      byDay.set(period.day, [period]);
+    }
+  }
+
+  const measured = new Map<string, MeasuredSleepDay>();
+
+  for (const [day, dayPeriods] of byDay) {
+    const sum = (pick: (period: OuraSleepResponse) => number | undefined | null): number =>
+      dayPeriods.reduce((acc, period) => acc + (pick(period) ?? 0), 0);
+
+    const main = dayPeriods.reduce((longest, period) =>
+      period.total_sleep_duration > longest.total_sleep_duration ? period : longest
+    );
+
+    const totalSleep = sum((period) => period.total_sleep_duration);
+    const timeInBed = sum((period) => period.time_in_bed);
+
+    measured.set(day, {
+      totalSleep,
+      timeInBed,
+      deep: sum((period) => period.deep_sleep_duration),
+      light: sum((period) => period.light_sleep_duration),
+      rem: sum((period) => period.rem_sleep_duration),
+      awake: sum((period) => period.awake_time),
+      efficiency: timeInBed > 0 ? Math.round((totalSleep / timeInBed) * 1000) / 10 : null,
+      latency: main.latency ?? null,
+      bedtimeStart: main.bedtime_start ?? null,
+      bedtimeEnd: main.bedtime_end ?? null,
+      averageHrv: main.average_hrv ?? null,
+      averageHeartRate: main.average_heart_rate ?? null,
+      lowestHeartRate: main.lowest_heart_rate ?? null,
+      periods: dayPeriods.length,
+    });
+  }
+
+  return measured;
+}
+
 /**
  * Handler for get_sleep_summary tool
  */
@@ -499,28 +574,69 @@ async function handleGetSleepSummary(args: any): Promise<string> {
   const cached = cache.get<string>(cacheKey);
   if (cached) return cached;
 
-  const data = await getDailySleep(start_date, end_date || getTodayDate());
+  const resolvedEnd = end_date || getTodayDate();
 
-  const mapped = data.map((item) => ({
-    date: item.day,
-    score: item.score,
-    total_sleep_duration: item.contributors.total_sleep * 3600,
-    efficiency: item.contributors.efficiency,
-    latency: item.contributors.latency * 60,
-    deep_sleep_duration: item.contributors.deep_sleep * 3600,
-    light_sleep_duration: (item.contributors.total_sleep - item.contributors.deep_sleep - item.contributors.rem_sleep) * 3600,
-    rem_sleep_duration: item.contributors.rem_sleep * 3600,
-    awake_time: (item.contributors.total_sleep * (1 - item.contributors.efficiency / 100)) * 3600,
-    restfulness: item.contributors.restfulness,
-    timing: item.contributors.timing,
-    ...(include_hrv && { hrv_balance: 0 }), // Note: HRV balance not directly available in daily sleep
-  }));
+  // Durations, efficiency and latency are only available on the sleep-period
+  // endpoint. The daily_sleep endpoint carries the score and its contributors,
+  // which are 0-100 sub-scores — NOT measurements. Join the two.
+  const [data, periods] = await Promise.all([
+    getDailySleep(start_date, resolvedEnd),
+    getSleepPeriods(start_date, resolvedEnd),
+  ]);
+
+  const periodsByDay = groupSleepPeriodsByDay(periods);
+
+  const mapped = data.map((item) => {
+    const measured = periodsByDay.get(item.day) ?? null;
+
+    return {
+      date: item.day,
+      score: item.score,
+      // Measured values (seconds). Null when no sleep period was recorded for
+      // the day — never synthesised from the contributor scores.
+      total_sleep_duration: measured ? measured.totalSleep : null,
+      time_in_bed: measured ? measured.timeInBed : null,
+      efficiency: measured ? measured.efficiency : null,
+      latency: measured ? measured.latency : null,
+      deep_sleep_duration: measured ? measured.deep : null,
+      light_sleep_duration: measured ? measured.light : null,
+      rem_sleep_duration: measured ? measured.rem : null,
+      awake_time: measured ? measured.awake : null,
+      bedtime_start: measured ? measured.bedtimeStart : null,
+      bedtime_end: measured ? measured.bedtimeEnd : null,
+      // Oura sub-scores, 0-100. Kept under their own key so they can never be
+      // mistaken for measurements again.
+      contributor_scores: {
+        total_sleep: item.contributors.total_sleep,
+        efficiency: item.contributors.efficiency,
+        latency: item.contributors.latency,
+        deep_sleep: item.contributors.deep_sleep,
+        rem_sleep: item.contributors.rem_sleep,
+        restfulness: item.contributors.restfulness,
+        timing: item.contributors.timing,
+      },
+      restfulness: item.contributors.restfulness,
+      timing: item.contributors.timing,
+      ...(include_hrv && {
+        average_hrv: measured ? measured.averageHrv : null,
+        average_heart_rate: measured ? measured.averageHeartRate : null,
+        lowest_heart_rate: measured ? measured.lowestHeartRate : null,
+      }),
+    };
+  });
+
+  const average = (values: (number | null)[]): number | null => {
+    const present = values.filter((value): value is number => value !== null);
+    return present.length ? present.reduce((acc, value) => acc + value, 0) / present.length : null;
+  };
 
   const summary = {
-    average_score: mapped.reduce((acc, item) => acc + item.score, 0) / mapped.length,
-    average_duration: mapped.reduce((acc, item) => acc + item.total_sleep_duration, 0) / mapped.length,
-    average_efficiency: mapped.reduce((acc, item) => acc + item.efficiency, 0) / mapped.length,
+    average_score: average(mapped.map((item) => item.score)),
+    average_duration: average(mapped.map((item) => item.total_sleep_duration)),
+    average_efficiency: average(mapped.map((item) => item.efficiency)),
+    average_latency: average(mapped.map((item) => item.latency)),
     total_days: mapped.length,
+    days_missing_sleep_periods: mapped.filter((item) => item.total_sleep_duration === null).length,
   };
 
   const result = JSON.stringify({ data: mapped, summary }, null, 2);
@@ -710,11 +826,22 @@ async function handleGetSleepDetailed(args: any): Promise<string> {
     type: item.type,
     bedtime_start: item.bedtime_start,
     bedtime_end: item.bedtime_end,
+    // Durations in seconds, straight from the API.
+    total_sleep_duration: item.total_sleep_duration,
+    time_in_bed: item.time_in_bed,
+    deep_sleep_duration: item.deep_sleep_duration,
+    light_sleep_duration: item.light_sleep_duration,
+    rem_sleep_duration: item.rem_sleep_duration,
+    awake_time: item.awake_time,
+    latency: item.latency,
+    efficiency: item.efficiency,
+    restless_periods: item.restless_periods,
     breath_average: item.average_breath,
     heart_rate: {
       interval: item.heart_rate.interval,
       samples: item.heart_rate.items,
       average: item.average_heart_rate,
+      lowest: item.lowest_heart_rate,
     },
     hrv: {
       samples: item.hrv.items,
