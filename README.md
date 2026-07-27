@@ -207,7 +207,18 @@ Get sleep data for a date range.
 **Parameters:**
 - `start_date` (required): YYYY-MM-DD
 - `end_date` (optional): YYYY-MM-DD
-- `include_hrv` (optional): boolean
+- `include_hrv` (optional): boolean — adds `average_hrv`, `average_heart_rate`, `lowest_heart_rate`
+
+Joins the `daily_sleep` endpoint (score) with `sleep` (measurements). Durations
+are in **seconds** and come from the recorded sleep periods; a day with no period
+returns `null` for every measured field rather than a synthesised value. Where a
+day holds several periods (split night, nap) durations sum, while latency,
+bedtimes and heart metrics come from the longest period.
+
+`contributor_scores` holds Oura's 0-100 sub-scores. **These are scores, not
+measurements** — a `total_sleep` contributor of 78 does not mean 78 of anything.
+Converting them into units is exactly the bug this tool shipped with until
+2026-07-27, which produced 96-hour deep sleep and negative light sleep.
 
 ### 3. get_readiness_score
 Get daily readiness scores.
@@ -238,7 +249,8 @@ Get workout sessions.
 - `end_date` (optional): YYYY-MM-DD
 
 ### 7. get_sleep_detailed
-Get detailed sleep period data with heart rate and HRV.
+Get detailed sleep period data: per-period durations, stages, efficiency,
+latency, bedtimes, and the raw heart-rate / HRV sample arrays.
 
 **Parameters:**
 - `start_date` (required): YYYY-MM-DD
