@@ -490,6 +490,19 @@ async function handleGetPersonalInfo(): Promise<string> {
   return result;
 }
 
+/**
+ * The `/usercollection/sleep` route drops periods falling on the final day of a
+ * requested range, while `/usercollection/daily_sleep` includes it. Left
+ * unhandled, the most recent day — usually today, the one being asked about —
+ * silently comes back with no measurements at all. Pad the period request by a
+ * day; the day-keyed join discards the surplus.
+ */
+function dayAfter(date: string): string {
+  const padded = new Date(`${date}T00:00:00Z`);
+  padded.setUTCDate(padded.getUTCDate() + 1);
+  return padded.toISOString().split('T')[0];
+}
+
 interface MeasuredSleepDay {
   totalSleep: number;
   timeInBed: number;
@@ -581,7 +594,7 @@ async function handleGetSleepSummary(args: any): Promise<string> {
   // which are 0-100 sub-scores — NOT measurements. Join the two.
   const [data, periods] = await Promise.all([
     getDailySleep(start_date, resolvedEnd),
-    getSleepPeriods(start_date, resolvedEnd),
+    getSleepPeriods(start_date, dayAfter(resolvedEnd)),
   ]);
 
   const periodsByDay = groupSleepPeriodsByDay(periods);
@@ -604,6 +617,10 @@ async function handleGetSleepSummary(args: any): Promise<string> {
       awake_time: measured ? measured.awake : null,
       bedtime_start: measured ? measured.bedtimeStart : null,
       bedtime_end: measured ? measured.bedtimeEnd : null,
+      // >1 means a nap (or split night) is included in the durations above.
+      // Oura's own sleep score counts only the main period — so a day with a
+      // nap will read longer here than it does in the Oura app.
+      sleep_periods: measured ? measured.periods : 0,
       // Oura sub-scores, 0-100. Kept under their own key so they can never be
       // mistaken for measurements again.
       contributor_scores: {
@@ -819,7 +836,7 @@ async function handleGetSleepDetailed(args: any): Promise<string> {
   const cached = cache.get<string>(cacheKey);
   if (cached) return cached;
 
-  const data = await getSleepPeriods(start_date, end_date || getTodayDate());
+  const data = await getSleepPeriods(start_date, dayAfter(end_date || getTodayDate()));
 
   const mapped = data.map((item) => ({
     date: item.day,
