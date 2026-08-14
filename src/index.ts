@@ -46,13 +46,20 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 //    stays on /authorize and claude.ai never gets the auth code.
 //  - Cross-Origin-Opener-Policy: same-origin sandboxes the popup away from
 //    its claude.ai opener, breaking the postMessage handshake.
+//
+// The localhost entries need an explicit :* port wildcard. A CSP source with no
+// port matches only the scheme's default port (80 for http), so bare
+// 'http://localhost' does NOT match Claude Code's callback, which lands on a
+// random high port like http://localhost:62586/callback. Without the wildcard
+// the browser silently refuses the 302 and the approval page appears to reload.
+// claude.ai never hit this because it redirects to https://claude.ai/...
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
       scriptSrc: ["'self'"],
-      formAction: ["'self'", 'https://claude.ai', 'https://*.claude.ai', 'http://localhost', 'http://127.0.0.1'],
+      formAction: ["'self'", 'https://claude.ai', 'https://*.claude.ai', 'http://localhost:*', 'http://127.0.0.1:*'],
     },
   },
   crossOriginOpenerPolicy: false,
