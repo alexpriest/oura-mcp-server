@@ -315,9 +315,15 @@ export async function handleMessage(req: Request, res: Response): Promise<void> 
         // Return 202 Accepted to the POST request
         res.status(202).end();
       } else {
+        // A legacy SSE client reads results only from its stream, so a result
+        // written to this POST body is never seen and the client hangs. 404
+        // tells it the session is gone so it reconnects.
         logger.warn(`No SSE connection found for session: ${sessionId}`);
-        // Fallback: send via HTTP response
-        res.json(response);
+        res.status(404).json({
+          jsonrpc: '2.0',
+          id,
+          error: { code: -32001, message: 'Session not found; reconnect' },
+        });
       }
     } else {
       // No session ID, send via HTTP response
