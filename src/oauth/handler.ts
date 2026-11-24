@@ -271,7 +271,10 @@ export async function refreshAccessToken(refreshToken: string): Promise<OAuthTok
 export async function getValidAccessToken(): Promise<string> {
   let tokens = await loadTokens();
 
+  const pat = process.env.OURA_PAT;
+
   if (!tokens) {
+    if (pat) return pat;
     throw new Error('No OAuth tokens found. Please authenticate first.');
   }
 
@@ -290,10 +293,15 @@ export async function getValidAccessToken(): Promise<string> {
       return tokens.access_token;
     } catch (error) {
       logger.error('Failed to refresh token:', error);
+      if (pat) {
+        logger.warn('Falling back to OURA_PAT after failed OAuth refresh');
+        return pat;
+      }
       throw new Error('Failed to refresh access token. Please re-authenticate.');
     }
   }
 
+  if (pat) return pat;
   throw new Error('Access token expired and no refresh token available. Please re-authenticate.');
 }
 
